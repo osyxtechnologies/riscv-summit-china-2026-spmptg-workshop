@@ -1,0 +1,19 @@
+#ifndef PLAT_H
+#define PLAT_H
+
+#define PLAT_MEM_BASE 0x84200000
+#define PLAT_MEM_SIZE 0x04000000
+
+#define PLAT_TIMER_FREQ (25000000ull) // 25 MHz
+
+#define PLAT_UART_ADDR (0x10000000)
+#define UART_IRQ_ID (1)
+
+#define PLAT_APLIC_CTL_BASE_ADDR     (0xd000000)
+#define PLAT_APLIC_MAX_INTERRUPTS    (32)
+#define PLAT_IMSIC_IF_BASE_ADDR      (0x28002000)
+#define PLAT_IMSIC_MAX_INTERRUPTS    (255)
+
+#define CPU_EXT_SSTC 1
+
+#endif

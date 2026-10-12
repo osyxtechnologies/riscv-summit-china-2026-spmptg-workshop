@@ -1,0 +1,264 @@
+/*
+ * Copyright (c) 2025 Synopsys, Inc.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#define DT_DRV_COMPAT riscv_imsic
+
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
+#if defined(CONFIG_RISCV_AIA)
+#include <zephyr/drivers/interrupt_controller/riscv_aia.h>
+#endif
+#include <zephyr/drivers/interrupt_controller/riscv_imsic.h>
+#include <zephyr/arch/riscv/icsr.h>
+#include <zephyr/arch/riscv/irq.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/sw_isr_table.h>
+#include <zephyr/irq.h>
+
+LOG_MODULE_REGISTER(intc_riscv_imsic, CONFIG_LOG_DEFAULT_LEVEL);
+
+/*
+ * Privilege-level abstraction: select M-mode or S-mode IMSIC CSR accessors
+ * depending on CONFIG_RISCV_S_MODE.  The indirect register map (eidedelivery,
+ * eithreshold, eip*, eie*) is identical at both privilege levels (AIA §3.7);
+ * only the *iselect/*ireg CSRs and the *topei claim CSR differ.
+ */
+#ifdef CONFIG_RISCV_S_MODE
+#define xcsr_read(idx)      sicsr_read(idx)
+#define xcsr_write(idx, v)  sicsr_write(idx, v)
+#define xcsr_set(idx, m)    sicsr_set(idx, m)
+#define xcsr_clear(idx, m)  sicsr_clear(idx, m)
+#define CSR_XTOPEI          CSR_STOPEI
+#define RISCV_IRQ_XEXT      RISCV_IRQ_SEXT
+#else
+#define xcsr_read(idx)      micsr_read(idx)
+#define xcsr_write(idx, v)  micsr_write(idx, v)
+#define xcsr_set(idx, m)    micsr_set(idx, m)
+#define xcsr_clear(idx, m)  micsr_clear(idx, m)
+#define CSR_XTOPEI          CSR_MTOPEI
+#define RISCV_IRQ_XEXT      RISCV_IRQ_MEXT
+#endif
+
+struct imsic_cfg {
+	uintptr_t reg_base;
+	uint32_t num_ids;
+	uint32_t hart_id;
+	uint32_t nr_irqs; /* Effective IRQ limit for bounds checking */
+};
+
+/* Forward declaration */
+static void imsic_ext_isr(const void *arg);
+
+static int imsic_init(const struct device *dev)
+{
+	/* Enable interrupt delivery from this interrupt file (AIA §3.8.1, value 1) */
+	xcsr_write(ICSR_EIDELIVERY, EIDELIVERY_ENABLE);
+
+	/* Set EITHRESHOLD to 0 to allow all interrupts (no priority filtering) */
+	xcsr_write(ICSR_EITHRESH, 0);
+
+	LOG_DBG("IMSIC init hart=%u num_ids=%u nr_irqs=%u",
+		((const struct imsic_cfg *)dev->config)->hart_id,
+		((const struct imsic_cfg *)dev->config)->num_ids,
+		((const struct imsic_cfg *)dev->config)->nr_irqs);
+	LOG_DBG("  EIDELIVERY=0x%08lx EITHRESHOLD=0x%08lx",
+		(unsigned long)xcsr_read(ICSR_EIDELIVERY),
+		(unsigned long)xcsr_read(ICSR_EITHRESH));
+
+	return 0;
+}
+
+/* Runtime API: claim interrupt (atomic read and clear) */
+inline uint32_t riscv_imsic_claim(void)
+{
+	/* csrrw rd, *topei, x0: reads highest-priority pending EIID and claims it (AIA §3.9) */
+	uint32_t topei = csr_swap(CSR_XTOPEI, 0);
+
+	return (topei >> TOPEI_EIID_SHIFT) & TOPEI_EIID_MASK;
+}
+
+/* Helper to calculate EIE register index and bit position for an EIID */
+static inline void eiid_to_eie_index(uint32_t eiid, uint32_t *reg_index, uint32_t *bit)
+{
+	*reg_index = eiid / __riscv_xlen;
+	*bit = eiid % __riscv_xlen;
+}
+
+/* Enable an EIID in IMSIC EIE - operates on CURRENT CPU's IMSIC via CSRs */
+void riscv_imsic_enable_eiid(uint32_t eiid)
+{
+	uint32_t reg_index, bit;
+
+	eiid_to_eie_index(eiid, &reg_index, &bit);
+	uint32_t icsr_addr = ICSR_EIE0 + reg_index;
+
+	LOG_DBG("IMSIC enable EIID %u on CPU %u: EIE[%u] bit %u", eiid, arch_proc_id(),
+		reg_index, bit);
+	xcsr_set(icsr_addr, BIT(bit));
+}
+
+/* Disable an EIID in IMSIC EIE - operates on CURRENT CPU's IMSIC via CSRs */
+void riscv_imsic_disable_eiid(uint32_t eiid)
+{
+	uint32_t reg_index, bit;
+
+	eiid_to_eie_index(eiid, &reg_index, &bit);
+	uint32_t icsr_addr = ICSR_EIE0 + reg_index;
+
+	xcsr_clear(icsr_addr, BIT(bit));
+	LOG_DBG("IMSIC disable EIID %u on CPU %u", eiid, arch_proc_id());
+}
+
+/* Check if an EIID is enabled on CURRENT CPU's IMSIC */
+int riscv_imsic_is_enabled(uint32_t eiid)
+{
+	uint32_t reg_index, bit;
+
+	eiid_to_eie_index(eiid, &reg_index, &bit);
+	uint32_t icsr_addr = ICSR_EIE0 + reg_index;
+
+	return !!(xcsr_read(icsr_addr) & BIT(bit));
+}
+
+/* Separate IRQ registration for hart 0 vs other harts to avoid duplicate registration */
+static void imsic_irq_config_func_0(void)
+{
+	IRQ_CONNECT(RISCV_IRQ_XEXT, 0, imsic_ext_isr, DEVICE_DT_INST_GET(0), 0);
+	irq_enable(RISCV_IRQ_XEXT);
+	LOG_DBG("Registered EXT IRQ handler from hart 0 IMSIC instance");
+}
+
+#define IMSIC_IRQ_CONFIG_FUNC_DEFINE_SECONDARY(inst)                                               \
+	static void imsic_irq_config_func_##inst(void)                                             \
+	{                                                                                          \
+		irq_enable(RISCV_IRQ_XEXT);                                                        \
+		LOG_DBG("Hart %u IMSIC: enabled EXT locally (no IRQ_CONNECT)",                     \
+			DT_INST_PROP(inst, riscv_hart_id));                                        \
+	}
+
+/* Generate secondary IRQ config functions for instances 1+ */
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 1
+IMSIC_IRQ_CONFIG_FUNC_DEFINE_SECONDARY(1)
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 2
+IMSIC_IRQ_CONFIG_FUNC_DEFINE_SECONDARY(2)
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 3
+IMSIC_IRQ_CONFIG_FUNC_DEFINE_SECONDARY(3)
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 4
+IMSIC_IRQ_CONFIG_FUNC_DEFINE_SECONDARY(4)
+#endif
+
+#define IMSIC_INIT(inst)                                                                           \
+	static const struct imsic_cfg imsic_cfg_##inst = {                                         \
+		.reg_base = DT_INST_REG_ADDR(inst),                                                \
+		.num_ids = DT_INST_PROP(inst, riscv_num_ids),                                      \
+		.hart_id = DT_INST_PROP(inst, riscv_hart_id),                                      \
+		.nr_irqs = MIN(DT_INST_PROP(inst, riscv_num_ids), CONFIG_NUM_IRQS),                \
+	};                                                                                         \
+	DEVICE_DT_INST_DEFINE(inst, imsic_init, NULL, NULL, &imsic_cfg_##inst, PRE_KERNEL_1,       \
+			      CONFIG_INTC_INIT_PRIORITY, NULL);
+
+DT_INST_FOREACH_STATUS_OKAY(IMSIC_INIT)
+
+/* Call IRQ config functions at POST_KERNEL level to register external IRQ handler */
+static int imsic_irq_init(void)
+{
+	/* Call instance 0 (always present) */
+	imsic_irq_config_func_0();
+
+	/* Call secondary instance functions if they exist */
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 1
+	imsic_irq_config_func_1();
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 2
+	imsic_irq_config_func_2();
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 3
+	imsic_irq_config_func_3();
+#endif
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) > 4
+	imsic_irq_config_func_4();
+#endif
+
+	return 0;
+}
+
+SYS_INIT(imsic_irq_init, POST_KERNEL, CONFIG_INTC_INIT_PRIORITY);
+
+/*
+ * External interrupt handler: claim EIID from IMSIC and dispatch to registered ISR.
+ * Uses stopei in S-mode, mtopei in M-mode (AIA §3.9).
+ *
+ * With 1:1 mapping, EIID equals the local APLIC source number. The AIA
+ * coordinator dispatches it through the second-level ISR table.
+ */
+static void imsic_ext_isr(const void *arg)
+{
+	const struct device *dev = arg;
+
+#if defined(CONFIG_RISCV_AIA)
+	ARG_UNUSED(dev);
+#else
+	const struct imsic_cfg *cfg = dev->config;
+#endif
+	LOG_DBG("IMSIC EXT ISR entered");
+
+	uint32_t eiid = riscv_imsic_claim();
+
+	if (eiid == 0U) {
+		return; /* Spurious or already claimed */
+	}
+
+	LOG_DBG("IMSIC claimed EIID %u", eiid);
+#if defined(CONFIG_RISCV_AIA)
+	riscv_aia_dispatch_eiid(eiid);
+#else
+	if (eiid >= cfg->nr_irqs) {
+		LOG_ERR("EIID %u out of range (>= %u)", eiid, cfg->nr_irqs);
+		z_irq_spurious(NULL);
+		return;
+	}
+
+	_sw_isr_table[eiid].isr(_sw_isr_table[eiid].arg);
+#endif
+}
+
+#ifdef CONFIG_SMP
+/**
+ * @brief Initialize IMSIC on secondary CPUs
+ *
+ * This function is called on each secondary CPU during SMP boot to initialize
+ * the IMSIC interrupt controller on that CPU. It configures the EIDELIVERY
+ * and EITHRESHOLD CSRs to enable interrupt delivery.
+ *
+ * This follows the same pattern as smp_timer_init() for the CLINT timer.
+ *
+ * Note: IMSIC CSRs (accessed via ISELECT/IREG) are local to each CPU.
+ * When this function executes on CPU N, it configures that CPU's IMSIC file.
+ */
+void z_riscv_imsic_secondary_init(void)
+{
+	LOG_DBG("IMSIC secondary init on CPU %u", arch_proc_id());
+
+	xcsr_write(ICSR_EIDELIVERY, EIDELIVERY_ENABLE);
+	xcsr_write(ICSR_EITHRESH, 0);
+
+	irq_enable(RISCV_IRQ_XEXT);
+
+	unsigned long eidelivery_readback = xcsr_read(ICSR_EIDELIVERY);
+
+	LOG_DBG("CPU %u IMSIC initialized: EIDELIVERY=0x%08lx EITHRESH=0x%08lx", arch_proc_id(),
+		eidelivery_readback, (unsigned long)xcsr_read(ICSR_EITHRESH));
+
+	if (!(eidelivery_readback & EIDELIVERY_ENABLE)) {
+		LOG_ERR("CPU %u IMSIC EIDELIVERY enable bit not set! Got 0x%08lx", arch_proc_id(),
+			eidelivery_readback);
+	}
+}
+#endif /* CONFIG_SMP */

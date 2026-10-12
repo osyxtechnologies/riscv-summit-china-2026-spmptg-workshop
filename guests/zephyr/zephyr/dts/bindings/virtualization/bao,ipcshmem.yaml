@@ -1,0 +1,19 @@
+description: Bao IPC Shared Memory
+
+compatible: "bao,ipcshmem"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true
+  read-channel:
+    type: array
+  write-channel:
+    type: array
+  id:
+    type: int
+  zephyr,memory-region:
+   type: string
+  zephyr,memory-attr:
+   type: int

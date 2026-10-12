@@ -1,0 +1,36 @@
+RISC-V Summit China 2026 SPMP Workshop Materials
+Copyright (c) 2026 OSYX Technologies, Lda.
+
+This repository contains workshop materials (Bao configurations, build
+scripts, exercises, solutions, and documentation) licensed under the
+Apache License, Version 2.0. See LICENSE for the full text.
+
+-------------------------------------------------------------------------------
+Third-party components
+-------------------------------------------------------------------------------
+
+The following components are included in this repository under their own
+respective licenses. Each component's license file is located within its
+subdirectory.
+
+  bao-hypervisor/
+    Bao Hypervisor (OSYX Technologies fork)
+    Licensed under the Apache License, Version 2.0, with portions under the
+    OSYX Technologies Proprietary License.
+    See bao-hypervisor/LICENSE and bao-hypervisor/LICENSE-OSYX-PROPRIETARY.
+
+  opensbi/
+    OpenSBI - RISC-V Open Source Supervisor Binary Interface (OSYX fork)
+    Licensed under the 2-Clause BSD License.
+    See opensbi/COPYING.BSD.
+
+  guests/baremetal/
+    Bao Baremetal Guest (OSYX Technologies fork)
+    Licensed under the Apache License, Version 2.0.
+    See guests/baremetal/LICENSE.
+
+  guests/zephyr/zephyr/
+    Zephyr RTOS (OSYX Technologies fork)
+    Licensed under the Apache License, Version 2.0, with portions under
+    other compatible open-source licenses as noted in individual files.
+    See guests/zephyr/zephyr/LICENSE.

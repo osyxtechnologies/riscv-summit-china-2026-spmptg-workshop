@@ -1,0 +1,123 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Bao guest on QEMU `virt` (RV32, SPMP-for-Hypervisor variant).
+ *
+ * Bao maps UART0, APLIC and a guest IMSIC interrupt file into the VM.
+ * The QEMU virt timebase is 10 MHz.
+ */
+/dts-v1/;
+
+#include <freq.h>
+#include <mem.h>
+
+/ {
+	model = "Bao guest on QEMU virt (SPMP)";
+	compatible = "osyx,baovm-qemu-virt-spmp";
+
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,sram = &memory0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu_0: cpu@0 {
+			device_type = "cpu";
+			compatible = "openhwgroup,cva6", "riscv";
+			reg = <0>;
+			clock-frequency = <DT_FREQ_M(10)>;
+			timebase-frequency = <DT_FREQ_M(10)>;
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = "i", "m", "a", "f", "c",
+					       "zicsr", "zifencei",
+					       "smcsrind", "sstc", "ssaia";
+			riscv,privilege-modes = "s", "u";
+			mmu-type = "riscv,none";
+			status = "okay";
+
+			hlic: interrupt-controller {
+				#interrupt-cells = <1>;
+				interrupt-controller;
+				compatible = "riscv,cpu-intc";
+				status = "okay";
+			};
+		};
+	};
+
+	clocks {
+		clk_bus: clk_bus_0 {
+			#clock-cells = <0>;
+			compatible = "fixed-clock";
+			clock-frequency = <DT_FREQ_M(10)>;
+		};
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Memory slice assigned to this guest by Bao. */
+		memory0: memory@84200000 {
+			device_type = "memory";
+			reg = <0x84200000 DT_SIZE_M(16)>;
+		};
+
+		/* Machine timer. With Sstc, S-mode can program the deadline via
+		 * stimecmp directly; otherwise Zephyr falls back to an SBI
+		 * ecall served by the supervisor above (Bao). */
+		mtimer: timer@200bff8 {
+			compatible = "riscv,machine-timer";
+			reg = <0x200bff8 0x8>, <0x2004000 0x8>;
+			reg-names = "mtime", "mtimecmp";
+			interrupts-extended = <&hlic 7>;
+		};
+
+		/* AIA: per-hart S-mode IMSIC interrupt file mapped by Bao. */
+		imsic: imsic@28001000 {
+			compatible = "riscv,imsic";
+			reg = <0x28001000 0x1000>;
+			riscv,num-ids = <127>;
+			riscv,hart-id = <0>;
+			interrupt-controller;
+			#interrupt-cells = <1>;
+			msi-controller;
+			status = "okay";
+		};
+
+		/* AIA: APLIC routing wired interrupts to the IMSIC via MSI.
+		 * interrupts-extended is at hlic 9 (S-mode external) for the
+		 * irq-chain level accounting. */
+		aplic: aplic@d000000 {
+			compatible = "riscv,aplic";
+			reg = <0xd000000 0x4000>;
+			riscv,num-sources = <64>;
+			msi-parent = <&imsic>;
+			interrupts-extended = <&hlic 9>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			status = "okay";
+		};
+
+		/* UART assigned to this guest by Bao (NS16550, MMIO same as
+		 * QEMU virt's serial0; clock divisor is ignored by QEMU's
+		 * emulated ns16550). */
+
+        uart0: uart@10000000 {
+            interrupts = <10 1 1>;
+            interrupt-parent = <&aplic>;
+            clock-frequency = <0x384000>;
+            reg = <0x10000000 0x100>;
+            data-bits = <8>;
+            compatible = "ns16550";
+            reg-shift = <0>;
+        };
+	};
+};

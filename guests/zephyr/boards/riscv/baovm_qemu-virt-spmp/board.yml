@@ -1,0 +1,6 @@
+board:
+  name: baovm_qemu-virt-spmp
+  full_name: Bao guest on QEMU virt (SPMP)
+  vendor: osyx
+  socs:
+    - name: cv32a6

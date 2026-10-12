@@ -1,0 +1,9 @@
+build/
+.launch-error
+bao-hypervisor/bin
+bao-hypervisor/build
+docs/
+
+# Python bytecode caches (regenerated from .py; never source)
+__pycache__/
+*.pyc

@@ -1,0 +1,31 @@
+OSYX Technologies Proprietary License
+Copyright (c) 2025-2026 OSYX Technologies, Lda. All Rights Reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+The source code and associated files covered by this license ("Software")
+are the proprietary and confidential property of OSYX Technologies, Lda.
+("OSYX"). This Software is licensed, not sold.
+
+No rights are granted to use, copy, modify, merge, publish, distribute,
+sublicense, or sell copies of this Software, or to permit others to do so,
+except as expressly authorized in writing by OSYX Technologies.
+
+Workshop participants are granted a limited, non-exclusive, non-transferable
+personal license to use and modify this Software solely for educational
+purposes during authorized OSYX workshops. This license does not permit
+redistribution or use outside of the authorized workshop context.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL
+OSYX TECHNOLOGIES BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE.
+
+This license applies only to files explicitly marked with the SPDX identifier
+"LicenseRef-OSYX-Proprietary".
+
+Files not marked with this identifier are licensed as indicated by their own
+SPDX identifiers, license headers, or accompanying license files. Where no
+other license is indicated, the default license for this repository is the
+Apache License, Version 2.0 (see the LICENSE file in the repository root).

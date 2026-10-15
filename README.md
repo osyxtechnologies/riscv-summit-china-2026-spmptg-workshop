@@ -290,7 +290,9 @@ make build-opensbi CONFIG=<c>           Build the payload and OpenSBI firmware.
 Configurations: `milestone0`, `milestone1`, `milestone2`, `milestone3`.
 `SOLUTIONS=1` selects the reference configuration for any milestone.
 `NO_DOCKER=1` uses locally installed tools. Build outputs live under
-`build/qemu/<config>/`, keeping each milestone's artifacts separate.
+`build/qemu/<config>/exercise/` or `build/qemu/<config>/solution/`, keeping
+each milestone's and each variant's artifacts separate. `make clean CONFIG=<c>`
+removes both variants.
 
 ## Troubleshooting
 

@@ -8,8 +8,10 @@ Inside the workshop container, run:
   python3 scripts/test-task-isolation.py solution
 
 The exercise checks expect the unmodified starter; use solution checks for
-a completed exercise or reference build. Each check starts a fresh QEMU
-process. Logs go to build/validation/.
+a completed exercise or reference build. Each mode boots its own build; to
+check a completed exercise against the solution checks, run
+  python3 scripts/test-task-isolation.py solution --build exercise
+Each check starts a fresh QEMU process. Logs go to build/validation/.
 """
 import argparse
 import os
@@ -86,10 +88,16 @@ def check_scenario(command, mode, name, steps):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("exercise", "solution"))
-    mode = parser.parse_args().mode
+    parser.add_argument("--build", choices=("exercise", "solution"),
+                        help="build to boot (default: same as mode)")
+    args = parser.parse_args()
+    mode = args.mode
+    make_args = ["make", "-s", "_print-qemu-cmd", "CONFIG=milestone0",
+                 "NO_DOCKER=1"]
+    if (args.build or mode) == "solution":
+        make_args.append("SOLUTIONS=1")
     command = shlex.split(subprocess.check_output(
-        ["make", "-s", "_print-qemu-cmd", "CONFIG=milestone0", "NO_DOCKER=1"],
-        cwd=ROOT, text=True,
+        make_args, cwd=ROOT, text=True,
     ))
     private_fault = (b"f", b"[SPMP] Blocked private-stack access by task A.")
     check_scenario(command, mode, "private-stack-fault", [private_fault])

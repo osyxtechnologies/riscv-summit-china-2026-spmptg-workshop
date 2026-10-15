@@ -133,10 +133,14 @@ opensbi_dir := $(workshop_root)/opensbi
 zephyr_dir  := $(workshop_root)/guests/zephyr
 zephyr_src  := $(zephyr_dir)/zephyr
 
-# Per-config build paths
-build_dir     := $(workshop_root)/build/$(PLATFORM)/$(CONFIG)
+# Per-config build paths. Exercise and solution builds of the same milestone
+# get separate trees, otherwise an up-to-date object from one variant would
+# be reused when building the other.
+config_build_dir := $(workshop_root)/build/$(PLATFORM)/$(CONFIG)
+build_dir     := $(config_build_dir)/$(if $(SOLUTIONS),solution,exercise)
 zephyr_build  := $(build_dir)/zephyr
-bao_bin       := $(build_dir)/bao/bao.bin
+bao_build     := $(build_dir)/bao
+bao_bin       := $(bao_build)/bao.bin
 opensbi_build := $(build_dir)/opensbi
 
 # ---------------------------------------------------------------------------
@@ -290,9 +294,10 @@ else
 		CONFIG_REPO=$(bao_cfg_repo) \
 		CONFIG=$(CONFIG) \
 		CROSS_COMPILE=$(CROSS_COMPILE) \
+		build_dir=$(bao_build)/build \
+		bin_dir=$(bao_build)/bin \
 		-j$(NPROC)
-	mkdir -p $(dir $(bao_bin))
-	cp $(bao_dir)/bin/$(BAO_PLATFORM)/$(CONFIG)/bao.bin $(bao_bin)
+	cp $(bao_build)/bin/bao.bin $(bao_bin)
 
 endif
 
@@ -331,13 +336,7 @@ _print-qemu-cmd:
 	@printf '%s' "$(QEMU_CMD)"
 
 clean:
-ifneq ($(CONFIG),milestone0)
-	-$(MAKE) -C $(bao_dir) clean \
-		PLATFORM=$(BAO_PLATFORM) \
-		CONFIG_REPO=$(bao_cfg_repo) \
-		CONFIG=$(CONFIG)
-endif
-	rm -rf $(build_dir)
+	rm -rf $(config_build_dir)
 
 clean-all:
 	-rm -rf $(workshop_root)/bao-hypervisor/bin
